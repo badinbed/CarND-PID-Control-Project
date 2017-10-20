@@ -32,7 +32,7 @@ bool Twiddle::Next(std::vector<double>* p, double previousError) {
         m_currentIndex = (m_currentIndex+1)%m_p.size();
         m_up = true;
     } else {
-        cout << "twiddle e=" << previousError << " for p=[" << m_p[0];
+        cout << "no improvement e=" << previousError << " for p=[" << m_p[0];
         for(auto it = std::next(m_p.begin()); it != m_p.end(); ++it)
             cout << ", " << *it;
         cout << "]" << endl;

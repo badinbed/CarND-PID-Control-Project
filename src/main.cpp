@@ -4,22 +4,7 @@
 #include "PID.h"
 #include "twiddle.h"
 #include <math.h>
-//
-//
-// pid.Init(.1, 0.0, 0.0); -> 0.02 const
-//
-//
-//
-//PID: 0.075, 0, 0.35
-// 50:   16  16
-//100:   95  79
-//150:  141  46
-//200:  227  86
-//250:  372 145
-//300:  497 125
-//Debugging has finished
-//
-//
+
 // for convenience
 using json = nlohmann::json;
 using namespace std;
@@ -49,17 +34,20 @@ int main()
 {
   uWS::Hub h;
 
+  // init pid controllers for steering and throttle
   PID pidSteering;
-  pidSteering.Init(.15, 0, 1.5);
+  pidSteering.Init(0.148136, 0.0001, 1.5011);
 
   PID pidSpeed;
-  pidSpeed.Init(0.04, 0.00005, 0.0);
-  const double targetSpeed = 30.0;
+  pidSpeed.Init(0.038, 0.00003, 0.0);
+  const double targetSpeed = 35.0;
 
-  Twiddle twiddle({pidSteering.KP(), pidSteering.KD()}, {0.01, 0.01}, 0.004);
-  bool doTwiddle = true;
+  // twiddle initialization
+  Twiddle twiddle({pidSteering.KP(), pidSteering.KI(), pidSteering.KD()}, {0.001, 0.0001, 0.001}, 0.0001);
+  bool doTwiddle = false;
   int speedCheck = 500;
-  int maxFrame = 5800;
+  int maxFrame = 5000;
+
   h.onMessage([&pidSteering, &pidSpeed, targetSpeed, &twiddle, doTwiddle, speedCheck, maxFrame](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -81,65 +69,45 @@ int main()
             static int n_frame = 0;
             ++n_frame;
 
+            // twiddle optimization mode
             if(doTwiddle) {
+                // stop and pick next set of parameters if max number of frames exceeded, total error is larger than the best or the car crashed
                 if(n_frame > maxFrame || (pidSteering.TotalError() > twiddle.MinimumError()) || (n_frame%speedCheck == 0 && speed < 0.7*targetSpeed)) {
-                    cout << (n_frame > maxFrame) << "  " << (pidSteering.TotalError() > twiddle.MinimumError()) << "  " << (n_frame%speedCheck == 0 && speed < 0.7*targetSpeed) << endl;
-
                     double error = (n_frame%speedCheck == 0 && speed < 0.7*targetSpeed) ? numeric_limits<double>::max() : pidSteering.TotalError();
+
+                    // get next parameters
                     vector<double> p;
                     if(!twiddle.Next(&p, error))
-                        exit(0);
+                        exit(0); // if we reached the minimum dp threshold we stop
 
-                    pidSteering.Init(p[0],pidSpeed.KI(), p[2]);
+                    pidSteering.Init(p[0], p[1], p[2]);
                     n_frame = 0;
 
+                    // reset car
                     std::string msg = "42[\"reset\",{}]";
                     ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
                     return;
                 }
             }
 
+            // get pid controlled values for steering and throttle and clip them
+            double steer_value = std::min(1.0, std::max(-1.0, pidSteering.Control(cte)));
+            double speed_value = std::min(1.0, std::max(-1.0, pidSpeed.Control(speed - targetSpeed)));
 
 
-          double steer_value = std::min(1.0, std::max(-1.0, pidSteering.Control(cte)));
-
-          double speed_value = std::min(1.0, std::max(-1.0, pidSpeed.Control(speed - targetSpeed)));
-
-          // DEBUG
-          auto ce = pidSteering.CurrentErrors();
-          auto cwe = pidSteering.CurrentWeightedErrors();
-
-//          std::cout << "----------------------------------------------" << std::endl << std::endl;
-
-//          std::cout << "StCE:   " << ce[0] <<  ", " << ce[1] <<  ", " << ce[2] << std::endl;
-//          std::cout << "StCWE:  " << cwe[0] <<  ", " << cwe[1] <<  ", " << cwe[2] << std::endl;
-//          std::cout << "St:     " << steer_value << std::endl << std::endl;
-
-//          ce = pidSpeed.CurrentErrors();
-//          cwe = pidSpeed.CurrentWeightedErrors();
-
-//          std::cout << "SpCE:  " << ce[0] <<  ", " << ce[1] <<  ", " << ce[2] << std::endl;
-//          std::cout << "SpCWE: " << cwe[0] <<  ", " << cwe[1] <<  ", " << cwe[2] << std::endl;
-//          std::cout << "A:     " << avgAngle << std::endl;
-//          std::cout << "T:     " << target_speed << std::endl;
-//          std::cout << "Sp:    " << speed_value << std::endl << std::endl;
-
-//          static int pre_te = 0;
-//          if(n_frame == 1) {
-
-//              std::cout << endl << "PID: " << pidSteering.KP() << ", " << pidSteering.KI() << ", " << pidSteering.KD() << endl;
-//          }
-//          else if(n_frame%500 == 0) {
-//              int te = pidSteering.TotalError() + 0.5;
-//              int delta_te = te - pre_te;
-//              std::cout << setw(3) << n_frame << ": " <<  setw(4) << te << setw(4) << delta_te << std::endl;
-//              pre_te = te;
-//          } else if(n_frame > 2500) {
-//              std::string msg = "42[\"reset\",{}]";
-//              ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
-//              n_frame = 0;
-//              return;
-//          }
+            // if we don't twiddle we like some debug messages to see the total error evolve
+            if(!twiddle) {
+                static int pre_te = 0;
+                if(n_frame == 1) {
+                  std::cout << endl << "PID: " << pidSteering.KP() << ", " << pidSteering.KI() << ", " << pidSteering.KD() << endl;
+                }
+                else if(n_frame%1000 == 0) {
+                  int te = pidSteering.TotalError() + 0.5;
+                  int delta_te = te - pre_te;
+                  std::cout << setw(5) << n_frame << ": " <<  setw(4) << te << setw(4) << delta_te << std::endl;
+                  pre_te = te;
+                }
+            }
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;

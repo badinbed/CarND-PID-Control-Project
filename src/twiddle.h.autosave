@@ -1,0 +1,30 @@
+#ifndef TWIDDLE_H
+#define TWIDDLE_H
+
+#include <vector>
+
+class Twiddle
+{
+public:
+    Twiddle(const std::vector<double>& p, const std::vector<double>& dp, double tolerance);
+
+    /**
+     * @brief Next Calculates the next set of parameters based on the current p and dp and the previous 
+     *        error using the twiddle algorithm.
+     * @param p_out set of new parameters to run
+     * @param previousError
+     * @return 
+     */
+    bool Next(std::vector<double> *p_out, double previousError_in);
+    double MinimumError() const { return m_minError; }
+
+private:
+    std::vector<double> m_p;
+    std::vector<double> m_dp;
+    double m_minError;
+    double m_tolerance;
+    std::size_t m_currentIndex;
+    bool m_up;
+};
+
+#endif // TWIDDLE_H

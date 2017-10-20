@@ -1,0 +1,74 @@
+#ifndef PID_H
+#define PID_H
+
+#include <deque>
+#include <array>
+
+class PID {
+
+  /*
+  * Errors
+  */
+  double error_p;
+  double error_i;
+  double error_d;
+
+  bool first;
+  /*
+  * Coefficients
+  */ 
+  double Kp;
+  double Ki;
+  double Kd;
+
+  double square_error;
+
+public:
+  /*
+  * Constructor
+  */
+  PID();
+
+  /*
+  * Destructor.
+  */
+  virtual ~PID();
+
+  /*
+  * Initialize PID.
+  */
+  void Init(double Kp, double Ki, double Kd);
+
+  /*
+  * Calculate the process variable from the error
+  */
+  double Control(double error);
+
+  std::array<double, 3> CurrentErrors() const {
+      return {error_p, error_i, error_d};
+  }
+
+  std::array<double, 3> CurrentWeightedErrors() const {
+      return {error_p*Kp, error_i*Ki, error_d*Kd};
+  }
+
+  double KP() const {
+      return Kp;
+  }
+
+  double KD() const {
+      return Kd;
+  }
+
+  double KI() const {
+      return Ki;
+  }
+
+  /**
+  * Return the total PID error.
+  * 
+  **/
+  double TotalError();
+};
+
+#endif /* PID_H */
