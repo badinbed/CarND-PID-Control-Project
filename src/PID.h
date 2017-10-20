@@ -1,15 +1,19 @@
 #ifndef PID_H
 #define PID_H
 
+#include <deque>
+#include <array>
+
 class PID {
-public:
+
   /*
   * Errors
   */
-  double p_error;
-  double i_error;
-  double d_error;
+  double error_p;
+  double error_i;
+  double error_d;
 
+  bool first;
   /*
   * Coefficients
   */ 
@@ -17,6 +21,9 @@ public:
   double Ki;
   double Kd;
 
+  double square_error;
+
+public:
   /*
   * Constructor
   */
@@ -35,11 +42,33 @@ public:
   /*
   * Update the PID error variables given cross track error.
   */
-  void UpdateError(double cte);
+  double Control(double error);
 
-  /*
+  std::array<double, 3> CurrentErrors() const {
+      return {error_p, error_i, error_d};
+  }
+
+  std::array<double, 3> CurrentWeightedErrors() const {
+      return {error_p*Kp, error_i*Ki, error_d*Kd};
+  }
+
+  double KP() const {
+      return Kp;
+  }
+
+  double KD() const {
+      return Kd;
+  }
+
+  double KI() const {
+      return Ki;
+  }
+
+  /**
   * Calculate the total PID error.
-  */
+  *
+  * @param
+  **/
   double TotalError();
 };
 
