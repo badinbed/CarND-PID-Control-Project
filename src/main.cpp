@@ -2,6 +2,7 @@
 #include <iostream>
 #include "json.hpp"
 #include "PID.h"
+#include "twiddle.h"
 #include <math.h>
 //
 //
@@ -51,13 +52,15 @@ int main()
   PID pidSteering;
   pidSteering.Init(.15, 0, 1.5);
 
-  int init_phase = 50;
   PID pidSpeed;
   pidSpeed.Init(0.04, 0.00005, 0.0);
-  std::deque<double> angleHistory(10, 0);
+  const double targetSpeed = 30.0;
 
-
-  h.onMessage([&pidSteering, &pidSpeed, &angleHistory, init_phase](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  Twiddle twiddle({pidSteering.KP(), pidSteering.KD()}, {0.01, 0.01}, 0.004);
+  bool doTwiddle = true;
+  int speedCheck = 500;
+  int maxFrame = 5800;
+  h.onMessage([&pidSteering, &pidSpeed, targetSpeed, &twiddle, doTwiddle, speedCheck, maxFrame](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -69,27 +72,38 @@ int main()
         auto j = json::parse(s);
         std::string event = j[0].get<std::string>();
         if (event == "telemetry") {
-            static int n_message = 0;
 
-            ++n_message;
+            // j[1] is the data JSON object
+            double cte = std::stod(j[1]["cte"].get<std::string>());
+            double speed = std::stod(j[1]["speed"].get<std::string>());
+            double angle = std::stod(j[1]["steering_angle"].get<std::string>());
 
-          // j[1] is the data JSON object
-          double cte = std::stod(j[1]["cte"].get<std::string>());
-          double speed = std::stod(j[1]["speed"].get<std::string>());
-          double angle = std::stod(j[1]["steering_angle"].get<std::string>());
-          angleHistory.pop_front();
-          angleHistory.push_back(abs(angle));
-          double avgAngle = std::accumulate(angleHistory.begin(), angleHistory.end(), 0.0) / (double)angleHistory.size();
+            static int n_frame = 0;
+            ++n_frame;
 
-          double steer_value = pidSteering.Control(cte);
-          steer_value = std::min(1.0, std::max(-1.0, steer_value));
+            if(doTwiddle) {
+                if(n_frame > maxFrame || (pidSteering.TotalError() > twiddle.MinimumError()) || (n_frame%speedCheck == 0 && speed < 0.7*targetSpeed)) {
+                    cout << (n_frame > maxFrame) << "  " << (pidSteering.TotalError() > twiddle.MinimumError()) << "  " << (n_frame%speedCheck == 0 && speed < 0.7*targetSpeed) << endl;
 
-          double target_speed = 30.0;
-          if(n_message > init_phase)
-              target_speed *= (1-avgAngle/600.0);
+                    double error = (n_frame%speedCheck == 0 && speed < 0.7*targetSpeed) ? numeric_limits<double>::max() : pidSteering.TotalError();
+                    vector<double> p;
+                    if(!twiddle.Next(&p, error))
+                        exit(0);
 
-          double speed_value = pidSpeed.Control(speed - target_speed);
-          speed_value = std::min(1.0, std::max(-1.0, speed_value));
+                    pidSteering.Init(p[0],pidSpeed.KI(), p[2]);
+                    n_frame = 0;
+
+                    std::string msg = "42[\"reset\",{}]";
+                    ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+                    return;
+                }
+            }
+
+
+
+          double steer_value = std::min(1.0, std::max(-1.0, pidSteering.Control(cte)));
+
+          double speed_value = std::min(1.0, std::max(-1.0, pidSpeed.Control(speed - targetSpeed)));
 
           // DEBUG
           auto ce = pidSteering.CurrentErrors();
@@ -110,17 +124,23 @@ int main()
 //          std::cout << "T:     " << target_speed << std::endl;
 //          std::cout << "Sp:    " << speed_value << std::endl << std::endl;
 
-          static int pre_te = 0;
-          if(n_message == 1) {
+//          static int pre_te = 0;
+//          if(n_frame == 1) {
 
-              std::cout << endl << "PID: " << pidSteering.KP() << ", " << pidSteering.KI() << ", " << pidSteering.KD() << endl;
-          }
-          else if(n_message%50 == 0) {
-              int te = pidSteering.TotalError() + 0.5;
-              int delta_te = te - pre_te;
-              std::cout << setw(3) << n_message << ": " <<  setw(4) << te << setw(4) << delta_te << std::endl;
-              pre_te = te;
-          }
+//              std::cout << endl << "PID: " << pidSteering.KP() << ", " << pidSteering.KI() << ", " << pidSteering.KD() << endl;
+//          }
+//          else if(n_frame%500 == 0) {
+//              int te = pidSteering.TotalError() + 0.5;
+//              int delta_te = te - pre_te;
+//              std::cout << setw(3) << n_frame << ": " <<  setw(4) << te << setw(4) << delta_te << std::endl;
+//              pre_te = te;
+//          } else if(n_frame > 2500) {
+//              std::string msg = "42[\"reset\",{}]";
+//              ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+//              n_frame = 0;
+//              return;
+//          }
+
           json msgJson;
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = speed_value;
@@ -154,7 +174,7 @@ int main()
   });
 
   h.onConnection([&h](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
-    std::cout << "Connected!!!" << std::endl;
+    //std::cout << "Connected!!!" << std::endl;
   });
 
   h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code, char *message, size_t length) {
